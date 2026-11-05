@@ -1,0 +1,51 @@
+name: Render video
+
+on:
+  repository_dispatch:
+    types: [render_video]
+  workflow_dispatch:
+    inputs:
+      row_id:
+        description: "Row number (used in the release tag)"
+        required: true
+        default: "test"
+      script:
+        description: "Script JSON (same format Gemini returns)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  render:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg fonts-dejavu-core
+          pip install edge-tts requests
+
+      - name: Render video
+        env:
+          SCRIPT_JSON: ${{ github.event.client_payload.script || github.event.inputs.script }}
+          # Change the voice here. Arabic examples: ar-EG-ShakirNeural, ar-SA-HamedNeural
+          VOICE: en-US-GuyNeural
+          VOICE_RATE: "-5%"
+        run: python render.py
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ROW_ID: ${{ github.event.client_payload.row_id || github.event.inputs.row_id }}
+        run: |
+          gh release delete "video-$ROW_ID" --yes --cleanup-tag || true
+          gh release create "video-$ROW_ID" out/final.mp4 out/thumb.jpg \
+            --title "Video $ROW_ID" --notes "Rendered by GitHub Actions"

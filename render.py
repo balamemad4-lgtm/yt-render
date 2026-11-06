@@ -8,10 +8,10 @@ MUSIC = "music/background.mp3"
 FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
 VOICES = {
-    "arabic": "ar-SA-HamedNeural", "english": "en-US-GuyNeural", "french": "fr-FR-HenriNeural",
+    "english": "en-GB-RyanNeural", "arabic": "ar-SA-HamedNeural", "french": "fr-FR-HenriNeural",
     "spanish": "es-ES-AlvaroNeural", "german": "de-DE-ConradNeural", "turkish": "tr-TR-AhmetNeural",
 }
-VOICE = "en-US-GuyNeural"
+VOICE = "en-GB-RyanNeural"
 RATE = os.environ.get("VOICE_RATE", "-5%")
  
  
@@ -27,14 +27,73 @@ def set_output(key, value):
             f.write(f"{key}={value}\n")
  
  
+# ---------------------------------------------------------------- Gemini
+def gemini_json(system, prompt, schema, temperature=0.8):
+    key = os.environ.get("GEMINI_API_KEY", "").strip()
+    if not key:
+        raise SystemExit("GEMINI_API_KEY is missing. Add it in Settings > Secrets and variables > Actions.")
+    body = {
+        "systemInstruction": {"parts": [{"text": system}]},
+        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+        "generationConfig": {"temperature": temperature, "responseMimeType": "application/json",
+                             "responseSchema": schema},
+    }
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent"
+    last = ""
+    for attempt in range(5):
+        try:
+            r = requests.post(url, headers={"x-goog-api-key": key, "Content-Type": "application/json"},
+                              json=body, timeout=300)
+            if r.status_code == 200:
+                parts = r.json()["candidates"][0]["content"]["parts"]
+                return json.loads("".join(p.get("text", "") for p in parts), strict=False)
+            if r.status_code in (400, 401, 403):
+                raise SystemExit(f"Gemini rejected the request ({r.status_code}): {r.text[:300]}")
+            last = f"HTTP {r.status_code}: {r.text[:300]}"
+        except SystemExit:
+            raise
+        except Exception as e:
+            last = str(e)
+        print("Gemini retry:", last, flush=True)
+        time.sleep(10 * (attempt + 1))
+    raise SystemExit("Gemini failed: " + last)
+ 
+ 
+def read_used():
+    if not os.path.exists("used_topics.txt"):
+        return []
+    return [l.strip() for l in open("used_topics.txt", encoding="utf-8").read().splitlines() if l.strip()]
+ 
+ 
+def remember(topic):
+    with open("used_topics.txt", "a", encoding="utf-8") as f:
+        f.write(topic.strip() + "\n")
+ 
+ 
+def suggest_topic(lang):
+    used = read_used()
+    typ = "myth" if len(used) % 2 == 0 else "documentary"
+    system = "You are the content planner of a YouTube channel about documentaries and mythical tales."
+    prompt = (f"Suggest ONE new video topic for the type: {typ}. It must be specific, with a strong story and "
+              "real curiosity value (for a myth: one specific tale; for a documentary: one specific, well "
+              f"documented historical event, place, person or mystery). Write it in {lang} as a short topic phrase. "
+              f"Do NOT repeat or closely resemble any of these already used topics: {used[-150:]}. "
+              'Return ONLY JSON like {"topic": "..."}')
+    schema = {"type": "OBJECT", "properties": {"topic": {"type": "STRING"}}, "required": ["topic"]}
+    data = gemini_json(system, prompt, schema, 1.0)
+    return typ, data["topic"].strip()
+ 
+ 
 def get_topic():
+    """Order: topic typed by hand -> next line of topics.txt -> topic invented by Gemini."""
     topic = os.environ.get("TOPIC", "").strip()
-    typ = os.environ.get("TYPE", "").strip() or "myth"
-    lang = os.environ.get("LANGUAGE", "").strip() or "Arabic"
+    typ = os.environ.get("TYPE", "").strip()
+    lang = os.environ.get("LANGUAGE", "").strip() or "English"
+    for name in ("topics.txt", "used_topics.txt"):
+        if not os.path.exists(name):
+            open(name, "a").close()
     if topic:
-        return typ, topic, lang, False
-    if not os.path.exists("topics.txt"):
-        return None
+        return typ or "myth", topic, lang
     lines = open("topics.txt", encoding="utf-8").read().splitlines()
     for i, line in enumerate(lines):
         s = line.strip()
@@ -48,18 +107,16 @@ def get_topic():
         del lines[i]
         with open("topics.txt", "w", encoding="utf-8") as f:
             f.write("\n".join(lines) + "\n")
-        return typ, topic, lang, True
-    return None
+        return typ or "myth", topic, lang
+    typ2, topic = suggest_topic(lang)
+    return typ or typ2, topic, lang
  
  
 def generate_script(typ, topic, lang):
-    key = os.environ.get("GEMINI_API_KEY", "").strip()
-    if not key:
-        raise SystemExit("GEMINI_API_KEY is missing. Add it in Settings > Secrets and variables > Actions.")
     system = ("You are a senior scriptwriter for a YouTube channel that publishes documentaries and mythical tales. "
               "You write gripping, accurate narration for voice-over. You never invent facts. If something is legend, "
-              "uncertain, or disputed, you say so in the narration. Plain spoken language: short sentences, no markdown, "
-              "no stage directions inside narration.")
+              "uncertain, or disputed, you say so in the narration. Plain spoken language: short sentences, no "
+              "markdown, no stage directions inside narration.")
     prompt = f"""Write a video script.
  
 TOPIC: {topic}
@@ -90,47 +147,26 @@ THUMBNAIL: 3 to 5 word overlay_text and an image_prompt with a strong single foc
  
 Return ONLY the JSON object matching the schema."""
     S = lambda t: {"type": t}
-    body = {
-        "systemInstruction": {"parts": [{"text": system}]},
-        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-        "generationConfig": {
-            "temperature": 0.8, "responseMimeType": "application/json",
-            "responseSchema": {"type": "OBJECT", "properties": {
-                "title": S("STRING"), "description": S("STRING"),
-                "tags": {"type": "ARRAY", "items": S("STRING")},
-                "style_guide": S("STRING"),
-                "sources": {"type": "ARRAY", "items": S("STRING")},
-                "thumbnail": {"type": "OBJECT", "properties": {"overlay_text": S("STRING"), "image_prompt": S("STRING")},
-                              "required": ["overlay_text", "image_prompt"]},
-                "scenes": {"type": "ARRAY", "items": {"type": "OBJECT", "properties": {
-                    "id": S("INTEGER"), "narration": S("STRING"), "image_prompt": S("STRING")},
-                    "required": ["id", "narration", "image_prompt"]}}},
-                "required": ["title", "description", "tags", "style_guide", "sources", "thumbnail", "scenes"]}}}
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent"
-    last = ""
-    for attempt in range(5):
-        try:
-            r = requests.post(url, headers={"x-goog-api-key": key, "Content-Type": "application/json"},
-                              json=body, timeout=300)
-            if r.status_code == 200:
-                parts = r.json()["candidates"][0]["content"]["parts"]
-                script = json.loads("".join(p.get("text", "") for p in parts), strict=False)
-                if script.get("scenes"):
-                    return script
-                last = "no scenes in answer"
-            elif r.status_code in (400, 401, 403):
-                raise SystemExit(f"Gemini rejected the request ({r.status_code}): {r.text[:300]}")
-            else:
-                last = f"HTTP {r.status_code}: {r.text[:300]}"
-        except SystemExit:
-            raise
-        except Exception as e:
-            last = str(e)
-        print("Gemini retry:", last, flush=True)
-        time.sleep(10 * (attempt + 1))
-    raise SystemExit("Gemini failed: " + last)
+    schema = {"type": "OBJECT", "properties": {
+        "title": S("STRING"), "description": S("STRING"),
+        "tags": {"type": "ARRAY", "items": S("STRING")},
+        "style_guide": S("STRING"),
+        "sources": {"type": "ARRAY", "items": S("STRING")},
+        "thumbnail": {"type": "OBJECT", "properties": {"overlay_text": S("STRING"), "image_prompt": S("STRING")},
+                      "required": ["overlay_text", "image_prompt"]},
+        "scenes": {"type": "ARRAY", "items": {"type": "OBJECT", "properties": {
+            "id": S("INTEGER"), "narration": S("STRING"), "image_prompt": S("STRING")},
+            "required": ["id", "narration", "image_prompt"]}}},
+        "required": ["title", "description", "tags", "style_guide", "sources", "thumbnail", "scenes"]}
+    for attempt in range(3):
+        script = gemini_json(system, prompt, schema, 0.8)
+        if len(script.get("scenes", [])) >= 6:
+            return script
+        print("Script too short, trying again", flush=True)
+    raise SystemExit("Gemini returned a script with too few scenes.")
  
  
+# ---------------------------------------------------------------- media helpers
 def duration(path):
     out = subprocess.check_output(["ffprobe", "-v", "error", "-show_entries", "format=duration",
                                    "-of", "default=nw=1:nk=1", path])
@@ -189,20 +225,15 @@ def chunks(text, max_words=9):
     return [c for c in out if c]
  
  
+# ---------------------------------------------------------------- main job
 def main():
     global VOICE
     os.makedirs(OUT, exist_ok=True)
     os.makedirs(WORK, exist_ok=True)
-    picked = get_topic()
-    if not picked:
-        print("No topic found. Run the workflow with a topic, or add lines to topics.txt.")
-        set_output("has_topic", "false")
-        set_output("from_queue", "false")
-        return
-    typ, topic, lang, from_queue = picked
+    typ, topic, lang = get_topic()
+    remember(topic)
     set_output("has_topic", "true")
-    set_output("from_queue", "true" if from_queue else "false")
-    VOICE = os.environ.get("VOICE", "").strip() or VOICES.get(lang.lower(), "en-US-GuyNeural")
+    VOICE = os.environ.get("VOICE", "").strip() or VOICES.get(lang.lower(), "en-GB-RyanNeural")
     print(f"Topic: {topic} | type: {typ} | language: {lang} | voice: {VOICE}", flush=True)
  
     script = generate_script(typ, topic, lang)
@@ -275,14 +306,12 @@ def main():
              "-c:a", "copy", "-movflags", "+faststart", f"{OUT}/final.mp4"])
     print(f"final.mp4 size: {os.path.getsize(OUT + '/final.mp4') / 1e6:.1f} MB", flush=True)
  
-    # Thumbnail
     th = script.get("thumbnail", {})
     base = f"{WORK}/thumb_base.jpg"
     if not fetch_image(th.get("image_prompt", scenes[0]["image_prompt"]), style, 999, base):
         fallback_image(base)
     text = th.get("overlay_text", title).strip()
     if re.search(r"[\u0600-\u06FF]", text):
-        # drawtext cannot join Arabic letters correctly, so keep the picture clean
         run(["ffmpeg", "-y", "-loglevel", "error", "-i", base, "-frames:v", "1", "-q:v", "3", f"{OUT}/thumb.jpg"])
     else:
         words = text.upper().split()

@@ -9,7 +9,7 @@ TARGET_BYTES = 4_400_000          # stay under Make free plan 5 MB file limit
 MAX_SECS = 58.0
 MUSIC = "music/background.mp3"
 FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")
 VOICES = {
     "english": "en-GB-RyanNeural", "arabic": "ar-SA-HamedNeural", "french": "fr-FR-HenriNeural",
     "spanish": "es-ES-AlvaroNeural", "german": "de-DE-ConradNeural", "turkish": "tr-TR-AhmetNeural",

@@ -77,9 +77,14 @@ def chunks(text, max_words=11):
  
  
 def main():
-    raw = os.environ["SCRIPT_JSON"].strip()
+        raw = os.environ.get("SCRIPT_JSON", "").strip()
+    print("SCRIPT_JSON length:", len(raw))
+    print("SCRIPT_JSON starts with:", raw[:150])
     raw = re.sub(r"^```(?:json)?|```$", "", raw).strip()
-    script = json.loads(raw)
+    start, end = raw.find("{"), raw.rfind("}")
+    if start == -1 or end == -1:
+        raise SystemExit("No JSON object found in SCRIPT_JSON. Check the Make body.")
+    script = json.loads(raw[start:end + 1], strict=False)
     style = script.get("style_guide", "cinematic illustration, no text")
     scenes = script["scenes"]
  

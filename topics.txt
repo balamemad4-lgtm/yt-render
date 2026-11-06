@@ -1,0 +1,5 @@
+# One topic per line:  type | topic | language
+# type = myth or documentary. Lines starting with # are ignored.
+myth | The Legend of the Phoenix | Arabic
+myth | The Twelve Labours of Heracles | Arabic
+documentary | How the Great Pyramid of Giza Was Built | Arabic

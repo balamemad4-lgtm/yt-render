@@ -3,7 +3,10 @@ import requests
 import edge_tts
  
 OUT, WORK = "out", "work"
-W, H, FPS = 1280, 720, 25
+W, H, FPS = 720, 1280, 25          # vertical 9:16 = YouTube Shorts
+AUDIO_K = 64                      # audio kbps
+TARGET_BYTES = 4_400_000          # stay under Make free plan 5 MB file limit
+MAX_SECS = 58.0
 MUSIC = "music/background.mp3"
 FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
@@ -114,36 +117,33 @@ def get_topic():
  
 def generate_script(typ, topic, lang):
     system = ("You are a senior scriptwriter for a YouTube channel that publishes documentaries and mythical tales. "
-              "You write gripping, accurate narration for voice-over. You never invent facts. If something is legend, "
+              "You write gripping, accurate, fast-paced narration for short vertical videos. You never invent facts. If something is legend, "
               "uncertain, or disputed, you say so in the narration. Plain spoken language: short sentences, no "
               "markdown, no stage directions inside narration.")
-    prompt = f"""Write a video script.
+    prompt = f"""Write a script for a YouTube Short (vertical video).
  
 TOPIC: {topic}
 TYPE: {typ} (documentary or myth)
 LANGUAGE: {lang}
-TARGET LENGTH: 8 to 10 minutes (about 1300 to 1600 spoken words)
+LENGTH: 45 to 55 seconds when spoken = 110 to 130 words in total. Never more than 130 words.
  
-Write the title, description, tags, narration and thumbnail overlay_text in {lang}.
-Write every image_prompt, the style_guide and thumbnail.image_prompt in English.
+Write the title, description, tags and narration in {lang}.
+Write every image_prompt and the style_guide in English.
  
-STRUCTURE:
-1. Hook (first 15 seconds): a surprising question, image, or claim. No greetings.
-2. Setup: context the viewer needs.
-3. Three to five story beats, each building tension or curiosity.
-4. Turning point or twist.
-5. Resolution and reflection: what this story means or what historians still debate.
-6. One short closing sentence inviting viewers to comment.
+STRUCTURE (fast, punchy):
+1. Hook in the first sentence: a surprising fact, question or claim. No greetings, no "welcome".
+2. Three or four quick story beats that keep the viewer curious.
+3. A twist or a striking final fact.
+4. One short closing line that makes people want to comment or watch again.
  
-DOCUMENTARY: only state facts you are confident about, attribute disputed claims, list real sources in sources.
-MYTH: tell it as a story, name the culture and original source texts, mention major variants.
+DOCUMENTARY: only state facts you are confident about; attribute anything disputed.
+MYTH: tell it as a story and say which culture or text it comes from.
  
-SCENES: 10 to 16 scenes of 20 to 45 seconds each. For every scene write an image_prompt describing ONE concrete visual: subject, setting, lighting, composition. No text, logos or real living people in images. Keep the visual style consistent with style_guide.
+SCENES: exactly 5 to 7 scenes of 6 to 10 seconds each. For every scene write an image_prompt describing ONE concrete visual in vertical 9:16 composition: subject, setting, lighting. No text, logos or real living people in the images. Keep the visual style consistent with style_guide.
  
-TITLE: under 70 characters, curiosity-driven, no clickbait lies.
-DESCRIPTION: 150 to 250 words, first two lines contain the main keywords, end with the sources list.
-TAGS: 10 to 15 tags.
-THUMBNAIL: 3 to 5 word overlay_text and an image_prompt with a strong single focal point.
+TITLE: at most 60 characters, curiosity-driven, no clickbait lies, no hashtags.
+DESCRIPTION: 2 to 3 sentences, then the hashtags #Shorts plus two topic hashtags.
+TAGS: 8 to 12 tags.
  
 Return ONLY the JSON object matching the schema."""
     S = lambda t: {"type": t}
@@ -151,16 +151,13 @@ Return ONLY the JSON object matching the schema."""
         "title": S("STRING"), "description": S("STRING"),
         "tags": {"type": "ARRAY", "items": S("STRING")},
         "style_guide": S("STRING"),
-        "sources": {"type": "ARRAY", "items": S("STRING")},
-        "thumbnail": {"type": "OBJECT", "properties": {"overlay_text": S("STRING"), "image_prompt": S("STRING")},
-                      "required": ["overlay_text", "image_prompt"]},
         "scenes": {"type": "ARRAY", "items": {"type": "OBJECT", "properties": {
             "id": S("INTEGER"), "narration": S("STRING"), "image_prompt": S("STRING")},
             "required": ["id", "narration", "image_prompt"]}}},
-        "required": ["title", "description", "tags", "style_guide", "sources", "thumbnail", "scenes"]}
+        "required": ["title", "description", "tags", "style_guide", "scenes"]}
     for attempt in range(3):
         script = gemini_json(system, prompt, schema, 0.8)
-        if len(script.get("scenes", [])) >= 6:
+        if len(script.get("scenes", [])) >= 4:
             return script
         print("Script too short, trying again", flush=True)
     raise SystemExit("Gemini returned a script with too few scenes.")
@@ -186,7 +183,7 @@ def tts(text, path):
  
  
 def fetch_image(prompt, style, seed, path):
-    full = f"{style}, {prompt}"[:900]
+    full = f"{style}, {prompt}, vertical composition"[:900]
     url = ("https://image.pollinations.ai/prompt/" + urllib.parse.quote(full) +
            f"?width={W}&height={H}&model=flux&nologo=true&seed={seed}")
     for attempt in range(4):
@@ -216,7 +213,7 @@ def ts(sec):
     return f"{h:02}:{m:02}:{s:02},{ms:03}"
  
  
-def chunks(text, max_words=9):
+def chunks(text, max_words=5):
     out = []
     for s in re.split(r"(?<=[.!?\u061f\u2026])\s+", text.strip()):
         words = s.split()
@@ -242,48 +239,59 @@ def main():
     with open(f"{OUT}/script.json", "w", encoding="utf-8") as f:
         json.dump(script, f, ensure_ascii=False, indent=2)
  
-    title = script["title"].strip()[:95]
-    desc = script["description"].strip() + "\n\nVisuals and narration in this video are AI-generated."
-    tags, total = [], 0
+    title = script["title"].strip().replace("#Shorts", "").strip()[:88]
+    title = f"{title} #Shorts"
+    desc = script["description"].strip()
+    if "#shorts" not in desc.lower():
+        desc += "\n\n#Shorts"
+    desc += "\n\nVisuals and narration in this video are AI-generated."
+    tags, total_len = [], 0
     for t in script.get("tags", []):
         t = t.replace(",", " ").strip()
-        if t and total + len(t) < 450:
+        if t and total_len + len(t) < 450:
             tags.append(t)
-            total += len(t) + 1
+            total_len += len(t) + 1
     with open(f"{OUT}/meta.json", "w", encoding="utf-8") as f:
         json.dump({"title": title, "description": desc, "tags": tags}, f, ensure_ascii=False)
     with open(f"{OUT}/youtube_info.txt", "w", encoding="utf-8") as f:
         f.write(f"TITLE:\n{title}\n\nDESCRIPTION:\n{desc}\n\nTAGS:\n{', '.join(tags)}\n")
  
-    clips, srt, t0, idx = [], [], 0.0, 1
+    clips, spans = [], []
     for i, sc in enumerate(scenes, start=1):
         print(f"=== Scene {i}/{len(scenes)}", flush=True)
         aud, img, clip = f"{WORK}/s{i}.mp3", f"{WORK}/s{i}.jpg", f"{WORK}/c{i}.mp4"
         tts(sc["narration"], aud)
         speech = duration(aud)
-        dur = speech + 0.5
+        dur = speech + 0.4
         if not fetch_image(sc["image_prompt"], style, i, img):
             fallback_image(img)
         time.sleep(2)
         frames = int(dur * FPS) + 1
-        zoom = "min(zoom+0.0005,1.12)" if i % 2 else "if(eq(on,1),1.12,max(zoom-0.0005,1.0))"
-        vf = (f"scale=1920:-1,zoompan=z='{zoom}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'"
+        zoom = "min(zoom+0.0006,1.15)" if i % 2 else "if(eq(on,1),1.15,max(zoom-0.0006,1.0))"
+        vf = (f"scale=1080:-1,zoompan=z='{zoom}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'"
               f":d={frames}:s={W}x{H}:fps={FPS},format=yuv420p")
         run(["ffmpeg", "-y", "-loglevel", "error", "-i", img, "-i", aud, "-vf", vf, "-af", "apad",
-             "-t", f"{dur:.2f}", "-c:v", "libx264", "-preset", "veryfast", "-crf", "28",
-             "-maxrate", "900k", "-bufsize", "1800k", "-r", str(FPS),
-             "-c:a", "aac", "-b:a", "96k", "-ar", "44100", "-ac", "2", clip])
+             "-t", f"{dur:.2f}", "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-r", str(FPS),
+             "-c:a", "aac", "-b:a", "128k", "-ar", "44100", "-ac", "2", clip])
         clips.append(clip)
-        parts = chunks(sc["narration"])
+        spans.append((sc["narration"], speech, dur))
+ 
+    total = sum(d for _, _, d in spans)
+    speed = min(total / (MAX_SECS - 1), 1.25) if total > MAX_SECS else 1.0
+    final_dur = total / speed
+    print(f"Total {total:.1f}s, speed x{speed:.2f}, final {final_dur:.1f}s", flush=True)
+ 
+    srt, t0, idx = [], 0.0, 1
+    for text, speech, dur in spans:
+        parts = chunks(text)
         tot = sum(len(p) for p in parts) or 1
         cur = t0
         for p in parts:
             span = speech * len(p) / tot
-            srt.append(f"{idx}\n{ts(cur)} --> {ts(cur + span)}\n{p}\n")
+            srt.append(f"{idx}\n{ts(cur / speed)} --> {ts((cur + span) / speed)}\n{p}\n")
             idx += 1
             cur += span
         t0 += dur
- 
     with open(f"{WORK}/subs.srt", "w", encoding="utf-8") as f:
         f.write("\n".join(srt))
     with open(f"{WORK}/list.txt", "w") as f:
@@ -292,36 +300,32 @@ def main():
     run(["ffmpeg", "-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", f"{WORK}/list.txt",
          "-c", "copy", f"{WORK}/joined.mp4"])
  
-    sub = (f"subtitles={WORK}/subs.srt:force_style='FontName=DejaVu Sans,FontSize=16,"
-           "PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=2,Shadow=0,MarginV=30'")
-    enc = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "28", "-maxrate", "900k", "-bufsize", "1800k"]
-    if os.path.exists(MUSIC):
-        run(["ffmpeg", "-y", "-loglevel", "error", "-i", f"{WORK}/joined.mp4", "-stream_loop", "-1", "-i", MUSIC,
-             "-filter_complex",
-             f"[0:v]{sub}[v];[1:a]volume=0.08[m];[0:a][m]amix=inputs=2:duration=first:normalize=0[a]",
-             "-map", "[v]", "-map", "[a]", *enc, "-c:a", "aac", "-b:a", "96k",
-             "-movflags", "+faststart", f"{OUT}/final.mp4"])
+    sub = (f"subtitles={WORK}/subs.srt:force_style='FontName=DejaVu Sans,Bold=1,FontSize=14,Alignment=2,"
+           "PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=3,Shadow=0,MarginV=80'")
+    vchain = (f"setpts=PTS/{speed:.4f}," if speed > 1.001 else "") + sub + ",format=yuv420p"
+    achain = f"atempo={speed:.4f}" if speed > 1.001 else "anull"
+    has_music = os.path.exists(MUSIC)
+    if has_music:
+        fc = (f"[0:v]{vchain}[v];[0:a]{achain}[a0];[1:a]volume=0.08[m];"
+              "[a0][m]amix=inputs=2:duration=first:normalize=0[a]")
     else:
-        run(["ffmpeg", "-y", "-loglevel", "error", "-i", f"{WORK}/joined.mp4", "-vf", sub, *enc,
-             "-c:a", "copy", "-movflags", "+faststart", f"{OUT}/final.mp4"])
-    print(f"final.mp4 size: {os.path.getsize(OUT + '/final.mp4') / 1e6:.1f} MB", flush=True)
+        fc = f"[0:v]{vchain}[v];[0:a]{achain}[a]"
  
-    th = script.get("thumbnail", {})
-    base = f"{WORK}/thumb_base.jpg"
-    if not fetch_image(th.get("image_prompt", scenes[0]["image_prompt"]), style, 999, base):
-        fallback_image(base)
-    text = th.get("overlay_text", title).strip()
-    if re.search(r"[\u0600-\u06FF]", text):
-        run(["ffmpeg", "-y", "-loglevel", "error", "-i", base, "-frames:v", "1", "-q:v", "3", f"{OUT}/thumb.jpg"])
-    else:
-        words = text.upper().split()
-        mid = math.ceil(len(words) / 2) if len(words) > 2 else len(words)
-        with open(f"{WORK}/thumb.txt", "w", encoding="utf-8") as f:
-            f.write(" ".join(words[:mid]) + ("\n" + " ".join(words[mid:]) if words[mid:] else ""))
-        run(["ffmpeg", "-y", "-loglevel", "error", "-i", base, "-vf",
-             f"drawtext=fontfile={FONT}:textfile={WORK}/thumb.txt:fontsize=90:fontcolor=white:"
-             "borderw=6:bordercolor=black:line_spacing=8:x=(w-text_w)/2:y=h-text_h-60",
-             "-frames:v", "1", "-q:v", "3", f"{OUT}/thumb.jpg"])
+    vk = max(150, int(TARGET_BYTES * 8 / final_dur / 1000) - AUDIO_K)
+    for attempt in range(3):
+        cmd = ["ffmpeg", "-y", "-loglevel", "error", "-i", f"{WORK}/joined.mp4"]
+        if has_music:
+            cmd += ["-stream_loop", "-1", "-i", MUSIC]
+        cmd += ["-filter_complex", fc, "-map", "[v]", "-map", "[a]",
+                "-c:v", "libx264", "-preset", "veryfast", "-b:v", f"{vk}k", "-maxrate", f"{vk}k",
+                "-bufsize", f"{2 * vk}k", "-c:a", "aac", "-b:a", f"{AUDIO_K}k", "-ac", "1", "-ar", "44100",
+                "-t", f"{final_dur + 0.1:.2f}", "-movflags", "+faststart", f"{OUT}/final.mp4"]
+        run(cmd)
+        size = os.path.getsize(f"{OUT}/final.mp4")
+        print(f"final.mp4: {size / 1e6:.2f} MB at {vk} kbps video", flush=True)
+        if size <= 4_700_000:
+            break
+        vk = int(vk * 0.8)
     print("DONE", flush=True)
  
  
@@ -333,7 +337,7 @@ def notify():
     meta = json.load(open(f"{OUT}/meta.json", encoding="utf-8"))
     base = f"https://github.com/{os.environ['REPO']}/releases/download/{os.environ['TAG']}"
     payload = {**meta, "tags_csv": ",".join(meta["tags"]), "video_url": f"{base}/final.mp4",
-               "thumb_url": f"{base}/thumb.jpg", "script_url": f"{base}/script.json"}
+               "script_url": f"{base}/script.json"}
     r = requests.post(url, json=payload, timeout=60)
     print("Make answered", r.status_code, r.text[:200])
     r.raise_for_status()

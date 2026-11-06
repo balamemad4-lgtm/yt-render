@@ -1,9 +1,9 @@
 name: Render video
  
 on:
-  # Automatic: every Monday, Wednesday and Friday at 08:00 UTC
+  # Automatic: one Short every day at 14:00 UTC (change the cron line to change this)
   schedule:
-    - cron: "0 8 * * 1,3,5"
+    - cron: "0 14 * * *"
   # Manual: Actions > Render video > Run workflow
   workflow_dispatch:
     inputs:
@@ -30,7 +30,7 @@ concurrency:
 jobs:
   render:
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
  
@@ -58,7 +58,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: video-${{ github.run_number }}
         run: |
-          gh release create "$TAG" out/final.mp4 out/thumb.jpg out/script.json \
+          gh release create "$TAG" out/final.mp4 out/script.json \
             --title "Video ${{ github.run_number }}" --notes-file out/youtube_info.txt
  
       - name: Remember used topic

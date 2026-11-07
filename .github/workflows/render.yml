@@ -1,5 +1,5 @@
 name: Render video
- 
+
 on:
   # Automatic: one Short every day at 14:00 UTC (change the cron line to change this)
   schedule:
@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       topic:
-        description: "Topic (leave empty to use topics.txt, or let Gemini invent one)"
+        description: "Topic (leave empty to use topics.txt, or let the AI invent one)"
         required: false
         default: ""
       type:
@@ -19,39 +19,40 @@ on:
         description: "Narration language"
         required: true
         default: "English"
- 
+
 permissions:
   contents: write
- 
+
 concurrency:
   group: render-video
   cancel-in-progress: false
- 
+
 jobs:
   render:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
- 
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
- 
+
       - name: Install tools
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg fonts-dejavu-core
           pip install edge-tts requests
+
       - name: Write script and render video
         id: render
         env:
-            GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           TOPIC: ${{ github.event.inputs.topic }}
           TYPE: ${{ github.event.inputs.type }}
           LANGUAGE: ${{ github.event.inputs.language }}
         run: python render.py
- 
+
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -59,7 +60,7 @@ jobs:
         run: |
           gh release create "$TAG" out/final.mp4 out/script.json \
             --title "Video ${{ github.run_number }}" --notes-file out/youtube_info.txt
- 
+
       - name: Remember used topic
         run: |
           git config user.name "github-actions"
@@ -67,11 +68,10 @@ jobs:
           git add topics.txt used_topics.txt
           git commit -m "Update topic lists" || true
           git push || true
- 
+
       - name: Send to Make (YouTube upload)
         env:
           MAKE_WEBHOOK_URL: ${{ secrets.MAKE_WEBHOOK_URL }}
           REPO: ${{ github.repository }}
           TAG: video-${{ github.run_number }}
         run: python render.py notify
- 

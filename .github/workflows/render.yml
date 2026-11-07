@@ -43,7 +43,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ffmpeg fonts-dejavu-core
           pip install edge-tts requests
- 
       - name: Write script and render video
         id: render
         env:

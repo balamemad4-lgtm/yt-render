@@ -9,7 +9,7 @@ TARGET_BYTES = 4_400_000           # stay under Make free plan 5 MB file limit
 MAX_SECS = 58.0
 MUSIC = "music/background.mp3"
 FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-LLM_MODEL = os.environ.get("LLM_MODEL", "llama-3.3-70b-versatile")
+LLM_MODEL = os.environ.get("LLM_MODEL", "llama-3.1-8b-instant")
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 VOICES = {
     "english": "en-GB-RyanNeural", "arabic": "ar-SA-HamedNeural", "french": "fr-FR-HenriNeural",

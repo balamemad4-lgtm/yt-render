@@ -319,4 +319,47 @@ def main():
          "-c", "copy", f"{WORK}/joined.mp4"])
 
     sub = (f"subtitles={WORK}/subs.srt:force_style='FontName=DejaVu Sans,Bold=1,FontSize=14,Alignment=2,"
-       "PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=3,Shadow=0,MarginV=80'")
+           "PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=3,Shadow=0,MarginV=80'")
+    vchain = (f"setpts=PTS/{speed:.4f}," if speed > 1.001 else "") + sub + ",format=yuv420p"
+    achain = f"atempo={speed:.4f}" if speed > 1.001 else "anull"
+    has_music = os.path.exists(MUSIC)
+    if has_music:
+        fc = (f"[0:v]{vchain}[v];[0:a]{achain}[a0];[1:a]volume=0.08[m];"
+              "[a0][m]amix=inputs=2:duration=first:normalize=0[a]")
+    else:
+        fc = f"[0:v]{vchain}[v];[0:a]{achain}[a]"
+
+    vk = max(150, int(TARGET_BYTES * 8 / final_dur / 1000) - AUDIO_K)
+    for attempt in range(3):
+        cmd = ["ffmpeg", "-y", "-loglevel", "error", "-i", f"{WORK}/joined.mp4"]
+        if has_music:
+            cmd += ["-stream_loop", "-1", "-i", MUSIC]
+        cmd += ["-filter_complex", fc, "-map", "[v]", "-map", "[a]",
+                "-c:v", "libx264", "-preset", "veryfast", "-b:v", f"{vk}k", "-maxrate", f"{vk}k",
+                "-bufsize", f"{2 * vk}k", "-c:a", "aac", "-b:a", f"{AUDIO_K}k", "-ac", "1", "-ar", "44100",
+                "-t", f"{final_dur + 0.1:.2f}", "-movflags", "+faststart", f"{OUT}/final.mp4"]
+        run(cmd)
+        size = os.path.getsize(f"{OUT}/final.mp4")
+        print(f"final.mp4: {size / 1e6:.2f} MB at {vk} kbps video", flush=True)
+        if size <= 4_700_000:
+            break
+        vk = int(vk * 0.8)
+    print("DONE", flush=True)
+
+
+def notify():
+    url = os.environ.get("MAKE_WEBHOOK_URL", "").strip()
+    if not url:
+        print("No MAKE_WEBHOOK_URL secret set, skipping.")
+        return
+    meta = json.load(open(f"{OUT}/meta.json", encoding="utf-8"))
+    base = f"https://github.com/{os.environ['REPO']}/releases/download/{os.environ['TAG']}"
+    payload = {**meta, "tags_csv": ",".join(meta["tags"]), "video_url": f"{base}/final.mp4",
+               "script_url": f"{base}/script.json"}
+    r = requests.post(url, json=payload, timeout=60)
+    print("Make answered", r.status_code, r.text[:200])
+    r.raise_for_status()
+
+
+if __name__ == "__main__":
+    notify() if len(sys.argv) > 1 and sys.argv[1] == "notify" else main()

@@ -47,7 +47,7 @@ jobs:
       - name: Write script and render video
         id: render
         env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+            GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           TOPIC: ${{ github.event.inputs.topic }}
           TYPE: ${{ github.event.inputs.type }}
           LANGUAGE: ${{ github.event.inputs.language }}

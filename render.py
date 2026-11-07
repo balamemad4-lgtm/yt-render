@@ -318,4 +318,5 @@ def main():
     run(["ffmpeg", "-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", f"{WORK}/list.txt",
          "-c", "copy", f"{WORK}/joined.mp4"])
 
-    sub = (f"subtitles={WORK}/subs.srt:force_style='Fo
+    sub = (f"subtitles={WORK}/subs.srt:force_style='FontName=DejaVu Sans,Bold=1,FontSize=14,Alignment=2,"
+       "PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=3,Shadow=0,MarginV=80'")

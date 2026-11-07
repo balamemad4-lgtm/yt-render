@@ -1,6 +1,5 @@
 # One topic per line:  type | topic | language
 # Optional. When this list is empty, Gemini invents new topics by itself.
 # type = myth or documentary. Lines starting with # are ignored.
-myth | The Twelve Labours of Heracles | English
 documentary | How the Great Pyramid of Giza Was Built | English
  

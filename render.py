@@ -16,7 +16,7 @@ VOICES = {
     "spanish": "es-ES-AlvaroNeural", "german": "de-DE-ConradNeural", "turkish": "tr-TR-AhmetNeural",
 }
 VOICE = "en-GB-RyanNeural"
-RATE = os.environ.get("VOICE_RATE", "-5%")
+RATE = os.environ.get("VOICE_RATE", "0%")
 
 
 def run(cmd):
